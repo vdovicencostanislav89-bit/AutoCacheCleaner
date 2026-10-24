@@ -7,367 +7,600 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.StatFs;
 import android.os.storage.StorageManager;
 import android.provider.Settings;
 import android.text.format.Formatter;
-import android.view.View;
-import android.widget.Button;
+import android.view.Gravity;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 public class MainActivity extends Activity {
 
-    private final int BG = Color.rgb(10, 15, 23);
-    private final int CARD = Color.rgb(22, 30, 42);
-    private final int TEAL = Color.rgb(40, 225, 205);
-    private final int WHITE = Color.rgb(240, 246, 250);
-    private final int MUTED = Color.rgb(155, 171, 188);
+    private static final int BG = Color.rgb(9, 14, 23);
+    private static final int CARD = Color.rgb(21, 29, 42);
+    private static final int TEAL = Color.rgb(45, 225, 205);
+    private static final int WHITE = Color.rgb(240, 246, 252);
+    private static final int MUTED = Color.rgb(155, 171, 190);
+    private static final int ORANGE = Color.rgb(255, 185, 85);
 
-    private LinearLayout root;
-    private TextView storageText;
-    private TextView ramText;
-    private TextView status;
-    private TextView scanResult;
-    private ProgressBar storageBar;
+    private static final int REQUEST_CLEAR_CACHE = 2101;
+    private static final String GAME_PACKAGE = "com.mobile.legends";
+
+    private LinearLayout content;
+    private TextView dashboardTab;
+    private TextView scanTab;
+    private TextView gameTab;
+    private TextView statusView;
+
+    private boolean pendingCacheRequest = false;
+    private String lastReport = "Сканирование ещё не выполнялось.";
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(BG);
+        getWindow().setStatusBarColor(BG);
+        getWindow().setNavigationBarColor(BG);
 
-        root = new LinearLayout(this);
+        LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20), dp(28), dp(20), dp(28));
-        scroll.addView(root);
-        setContentView(scroll);
+        root.setPadding(dp(18), dp(22), dp(18), dp(12));
+        root.setBackgroundColor(BG);
+        setContentView(root);
 
-        root.addView(text(
-            "AUTO CACHE CLEANER", 25, TEAL, true
-        ));
+        root.addView(text("AUTO CACHE CLEANER", 23, TEAL, true));
 
         TextView subtitle = text(
-            "Умное управление памятью", 15, MUTED, false
+            "SYSTEM CONTROL  •  GAMING EDITION", 11, MUTED, true
         );
-        subtitle.setPadding(0, dp(7), 0, dp(22));
+        subtitle.setPadding(0, dp(6), 0, dp(18));
         root.addView(subtitle);
 
-        LinearLayout storageCard = card();
-        root.addView(storageCard);
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(tabs);
 
-        storageCard.addView(text(
-            "ВНУТРЕННЯЯ ПАМЯТЬ", 13, MUTED, true
-        ));
+        dashboardTab = tab("Главная");
+        scanTab = tab("Сканер");
+        gameTab = tab("Game Mode");
 
-        storageText = text("Загрузка...", 17, WHITE, true);
-        storageText.setPadding(0, dp(14), 0, dp(12));
-        storageCard.addView(storageText);
+        tabs.addView(dashboardTab, weightParams());
+        tabs.addView(scanTab, weightParams());
+        tabs.addView(gameTab, weightParams());
 
-        storageBar = new ProgressBar(
-            this, null, android.R.attr.progressBarStyleHorizontal
-        );
-        storageBar.setMax(100);
-        storageBar.setProgressTintList(
-            android.content.res.ColorStateList.valueOf(TEAL)
-        );
-        storageBar.setProgressBackgroundTintList(
-            android.content.res.ColorStateList.valueOf(
-                Color.rgb(48, 60, 72)
-            )
-        );
-        storageCard.addView(storageBar);
+        dashboardTab.setOnClickListener(v -> showDashboard());
+        scanTab.setOnClickListener(v -> showScanner());
+        gameTab.setOnClickListener(v -> showGameMode());
 
-        LinearLayout ramCard = card();
-        LinearLayout.LayoutParams ramParams =
-            new LinearLayout.LayoutParams(-1, -2);
-        ramParams.topMargin = dp(14);
-        root.addView(ramCard, ramParams);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
 
-        ramCard.addView(text(
-            "ОПЕРАТИВНАЯ ПАМЯТЬ (ОЗУ)", 13, MUTED, true
-        ));
+        LinearLayout.LayoutParams scrollParams =
+            new LinearLayout.LayoutParams(-1, 0, 1);
+        scrollParams.topMargin = dp(14);
+        root.addView(scroll, scrollParams);
 
-        ramText = text("Загрузка...", 16, WHITE, true);
-        ramText.setPadding(0, dp(12), 0, 0);
-        ramCard.addView(ramText);
+        content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(0, 0, 0, dp(10));
+        scroll.addView(content);
 
-        LinearLayout resultCard = card();
-        LinearLayout.LayoutParams resultParams =
-            new LinearLayout.LayoutParams(-1, -2);
-        resultParams.topMargin = dp(14);
-        root.addView(resultCard, resultParams);
-
-        resultCard.addView(text(
-            "РЕЗУЛЬТАТ СКАНИРОВАНИЯ", 13, TEAL, true
-        ));
-
-        scanResult = text(
-            "Нажми «Сканировать систему», чтобы проверить показатели.",
-            14, MUTED, false
-        );
-        scanResult.setPadding(0, dp(12), 0, 0);
-        resultCard.addView(scanResult);
-
-        status = text("● Готов к работе", 14, TEAL, true);
-        status.setPadding(0, dp(18), 0, dp(6));
-        root.addView(status);
-
-        addButton("⌕  СКАНИРОВАТЬ СИСТЕМУ", new Runnable() {
-            @Override
-            public void run() {
-                scanSystem();
-            }
-        });
-
-        addButton("⟳  ОБНОВИТЬ ДАННЫЕ", new Runnable() {
-            @Override
-            public void run() {
-                refreshInfo();
-                status.setText("✓ Данные обновлены");
-            }
-        });
-
-        addButton("♻  ПОПРОБОВАТЬ ОЧИСТКУ КЭША",
-            new Runnable() {
-                @Override
-                public void run() {
-                    requestCacheClear();
-                }
-            });
-
-        addButton("⚙  НАСТРОЙКИ ПРИЛОЖЕНИЙ",
-            new Runnable() {
-                @Override
-                public void run() {
-                    openAppSettings();
-                }
-            });
-
-        LinearLayout infoCard = card();
-        LinearLayout.LayoutParams infoParams =
-            new LinearLayout.LayoutParams(-1, -2);
-        infoParams.topMargin = dp(18);
-        root.addView(infoCard, infoParams);
-
-        infoCard.addView(text(
-            "ИНФОРМАЦИЯ ОБ УСТРОЙСТВЕ",
-            13, TEAL, true
-        ));
-
-        infoCard.addView(text(
-            "\nПроизводитель: " + Build.MANUFACTURER
-            + "\nМодель: " + Build.MODEL
-            + "\nВерсия Android: " + Build.VERSION.RELEASE
-            + "\nУровень API: " + Build.VERSION.SDK_INT
-            + "\n\nПриложение использует системные показатели. "
-            + "Android ограничивает доступ к кэшу других приложений.",
-            14, MUTED, false
-        ));
-
-        refreshInfo();
+        showDashboard();
     }
 
-    private void scanSystem() {
-        try {
-            StatFs fs = new StatFs(
-                Environment.getDataDirectory().getPath()
-            );
-
-            long total = fs.getTotalBytes();
-            long free = fs.getAvailableBytes();
-            long used = total - free;
-
-            ActivityManager manager =
-                (ActivityManager) getSystemService(ACTIVITY_SERVICE);
-
-            ActivityManager.MemoryInfo mi =
-                new ActivityManager.MemoryInfo();
-
-            manager.getMemoryInfo(mi);
-
-            long ramUsed = mi.totalMem - mi.availMem;
-
-            int percent = total > 0
-                ? (int) ((used * 100L) / total) : 0;
-
-            scanResult.setText(
-                "✓ Проверка завершена\n\n"
-                + "Хранилище занято: "
-                + Formatter.formatFileSize(this, used)
-                + "\nСвободно: "
-                + Formatter.formatFileSize(this, free)
-                + "\nЗаполнено: " + percent + "%"
-                + "\n\nОЗУ используется: "
-                + Formatter.formatFileSize(this, ramUsed)
-                + "\nОЗУ доступно: "
-                + Formatter.formatFileSize(this, mi.availMem)
-                + "\n\nРазмер кэша других приложений "
-                + "не удалось определить: Android ограничивает доступ."
-            );
-
-            refreshInfo();
-            status.setText("✓ Сканирование завершено");
-
-        } catch (Exception e) {
-            scanResult.setText(
-                "Не удалось получить данные. Попробуй ещё раз."
-            );
-            status.setText("Ошибка сканирования");
-        }
-    }
-
-    private void refreshInfo() {
-        try {
-            StatFs fs = new StatFs(
-                Environment.getDataDirectory().getPath()
-            );
-
-            long total = fs.getTotalBytes();
-            long free = fs.getAvailableBytes();
-            long used = total - free;
-
-            int percent = total > 0
-                ? (int) ((used * 100L) / total) : 0;
-
-            storageText.setText(
-                Formatter.formatFileSize(this, used) + " занято"
-                + "\n" + Formatter.formatFileSize(this, free)
-                + " свободно"
-                + "\n" + percent + "% использовано"
-            );
-
-            storageBar.setProgress(percent);
-
-            ActivityManager manager =
-                (ActivityManager) getSystemService(ACTIVITY_SERVICE);
-
-            ActivityManager.MemoryInfo mi =
-                new ActivityManager.MemoryInfo();
-
-            manager.getMemoryInfo(mi);
-
-            ramText.setText(
-                "Используется: "
-                + Formatter.formatFileSize(
-                    this, mi.totalMem - mi.availMem
-                )
-                + "\nДоступно: "
-                + Formatter.formatFileSize(this, mi.availMem)
-                + "\nВсего: "
-                + Formatter.formatFileSize(this, mi.totalMem)
-            );
-
-        } catch (Exception e) {
-            status.setText("Не удалось получить данные памяти");
-        }
-    }
-
-    private void requestCacheClear() {
-        if (Build.VERSION.SDK_INT >= 30) {
-            try {
-                Intent intent = new Intent(
-                    StorageManager.ACTION_CLEAR_APP_CACHE
-                );
-                startActivity(intent);
-                status.setText(
-                    "Запрос передан Android. Следуй указаниям системы."
-                );
-            } catch (Exception e) {
-                status.setText(
-                    "Массовая очистка недоступна. Открой настройки."
-                );
-                openAppSettings();
-            }
-        } else {
-            status.setText(
-                "Открой настройки для управления приложениями."
-            );
-            openAppSettings();
-        }
-    }
-
-    private void openAppSettings() {
-        try {
-            startActivity(new Intent(
-                Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS
-            ));
-        } catch (Exception e) {
-            startActivity(new Intent(Settings.ACTION_SETTINGS));
-        }
-    }
-
-    private LinearLayout card() {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(17), dp(18), dp(17), dp(18));
-        box.setBackground(roundRect(CARD, 20));
-        return box;
+    private int dp(int value) {
+        return (int) (value *
+            getResources().getDisplayMetrics().density + 0.5f);
     }
 
     private TextView text(
         String value, int size, int color, boolean bold
     ) {
-        TextView view = new TextView(this);
-        view.setText(value);
-        view.setTextSize(size);
-        view.setTextColor(color);
-
-        if (bold) {
-            view.setTypeface(null, Typeface.BOLD);
-        }
-
-        return view;
+        TextView t = new TextView(this);
+        t.setText(value);
+        t.setTextSize(size);
+        t.setTextColor(color);
+        if (bold) t.setTypeface(null, Typeface.BOLD);
+        return t;
     }
 
-    private void addButton(String label, final Runnable action) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setTextSize(13);
-        button.setTextColor(BG);
-        button.setAllCaps(false);
-        button.setTypeface(null, Typeface.BOLD);
-        button.setPadding(dp(12), dp(10), dp(12), dp(10));
-        button.setBackground(roundRect(TEAL, 16));
-
-        LinearLayout.LayoutParams params =
-            new LinearLayout.LayoutParams(-1, -2);
-        params.topMargin = dp(10);
-        root.addView(button, params);
-
-        button.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                action.run();
-            }
-        });
-    }
-
-    private GradientDrawable roundRect(int color, int radius) {
+    private GradientDrawable round(int color, int radius) {
         GradientDrawable shape = new GradientDrawable();
         shape.setColor(color);
         shape.setCornerRadius(dp(radius));
         return shape;
     }
 
-    private int dp(int value) {
-        return (int) (value * getResources()
-            .getDisplayMetrics().density + 0.5f);
+    private LinearLayout card() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(17), dp(16), dp(17));
+        box.setBackground(round(CARD, 19));
+        return box;
+    }
+
+    private void addCard(LinearLayout box) {
+        LinearLayout.LayoutParams p =
+            new LinearLayout.LayoutParams(-1, -2);
+        p.bottomMargin = dp(12);
+        content.addView(box, p);
+    }
+
+    private LinearLayout.LayoutParams weightParams() {
+        LinearLayout.LayoutParams p =
+            new LinearLayout.LayoutParams(0, dp(46), 1);
+        p.setMargins(dp(3), 0, dp(3), 0);
+        return p;
+    }
+
+    private TextView tab(String label) {
+        TextView t = text(label, 12, WHITE, true);
+        t.setGravity(Gravity.CENTER);
+        t.setBackground(round(CARD, 13));
+        return t;
+    }
+
+    private void selectTab(TextView selected) {
+        dashboardTab.setBackground(round(CARD, 13));
+        scanTab.setBackground(round(CARD, 13));
+        gameTab.setBackground(round(CARD, 13));
+
+        dashboardTab.setTextColor(MUTED);
+        scanTab.setTextColor(MUTED);
+        gameTab.setTextColor(MUTED);
+
+        selected.setBackground(round(TEAL, 13));
+        selected.setTextColor(BG);
+    }
+
+    private void addHeading(String heading, String description) {
+        content.addView(text(heading, 23, WHITE, true));
+        TextView d = text(description, 13, MUTED, false);
+        d.setPadding(0, dp(6), 0, dp(16));
+        content.addView(d);
+    }
+
+    private void addButton(String label, Runnable action) {
+        TextView button = text(label, 13, BG, true);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(14), dp(16), dp(14), dp(16));
+        button.setBackground(round(TEAL, 15));
+        button.setClickable(true);
+        button.setFocusable(true);
+
+        LinearLayout.LayoutParams p =
+            new LinearLayout.LayoutParams(-1, -2);
+        p.bottomMargin = dp(10);
+        content.addView(button, p);
+        button.setOnClickListener(v -> action.run());
+    }
+
+    private void addNote(String message) {
+        TextView note = text(message, 12, MUTED, false);
+        note.setPadding(dp(4), dp(6), dp(4), dp(16));
+        content.addView(note);
+    }
+
+    private void showDashboard() {
+        selectTab(dashboardTab);
+        content.removeAllViews();
+        addHeading("Обзор устройства", "Текущие показатели телефона");
+
+        MemoryData data = readMemory();
+
+        LinearLayout storage = card();
+        addCard(storage);
+
+        storage.addView(text("ВНУТРЕННЯЯ ПАМЯТЬ", 12, MUTED, true));
+        storage.addView(text(
+            Formatter.formatFileSize(this, data.used) + " занято",
+            24, WHITE, true
+        ));
+        storage.addView(text(
+            Formatter.formatFileSize(this, data.free)
+                + " свободно из "
+                + Formatter.formatFileSize(this, data.total),
+            13, MUTED, false
+        ));
+
+        ProgressBar bar = new ProgressBar(
+            this, null, android.R.attr.progressBarStyleHorizontal
+        );
+        bar.setMax(100);
+        bar.setProgressTintList(
+            android.content.res.ColorStateList.valueOf(
+                data.percent >= 90 ? ORANGE : TEAL
+            )
+        );
+        bar.setProgressBackgroundTintList(
+            android.content.res.ColorStateList.valueOf(
+                Color.rgb(47, 59, 73)
+            )
+        );
+        LinearLayout.LayoutParams bp =
+            new LinearLayout.LayoutParams(-1, dp(10));
+        bp.topMargin = dp(14);
+        storage.addView(bar, bp);
+
+        bar.post(() ->
+            android.animation.ObjectAnimator.ofInt(
+                bar, "progress", 0, data.percent
+            ).setDuration(850).start()
+        );
+
+        storage.addView(text(
+            "\nЗаполнено: " + data.percent + "%",
+            13, data.percent >= 90 ? ORANGE : TEAL, true
+        ));
+
+        ActivityManager.MemoryInfo ram = readRam();
+
+        LinearLayout ramCard = card();
+        addCard(ramCard);
+        ramCard.addView(text("ОПЕРАТИВНАЯ ПАМЯТЬ", 12, TEAL, true));
+        ramCard.addView(text(
+            ram == null ? "Данные недоступны" :
+                "Всего: " + Formatter.formatFileSize(this, ram.totalMem)
+                + "\nДоступно: "
+                + Formatter.formatFileSize(this, ram.availMem),
+            15, WHITE, true
+        ));
+
+        LinearLayout device = card();
+        addCard(device);
+        device.addView(text("ИНФОРМАЦИЯ ОБ УСТРОЙСТВЕ",
+            12, TEAL, true));
+        device.addView(text(
+            "\nПроизводитель: " + Build.MANUFACTURER
+            + "\nМодель: " + Build.MODEL
+            + "\nAndroid: " + Build.VERSION.RELEASE
+            + "\nAPI: " + Build.VERSION.SDK_INT,
+            14, MUTED, false
+        ));
+
+        addButton("СКАНИРОВАТЬ СИСТЕМУ", this::showScanner);
+        addButton("ЗАПРОСИТЬ ОЧИСТКУ КЭША",
+            this::requestCacheClear);
+        addButton("ОТКРЫТЬ GAME MODE", this::showGameMode);
+
+        addNote("Android ограничивает доступ к приватным данным "
+            + "и кэшу других приложений.");
+    }
+
+    private void showScanner() {
+        selectTab(scanTab);
+        content.removeAllViews();
+        addHeading("Smart Scan", "Проверка системных показателей");
+
+        LinearLayout box = card();
+        addCard(box);
+
+        box.addView(text("РЕЗУЛЬТАТ СКАНИРОВАНИЯ",
+            13, TEAL, true));
+
+        ProgressBar progress = new ProgressBar(this);
+        progress.setMax(100);
+        progress.setProgressTintList(
+            android.content.res.ColorStateList.valueOf(TEAL)
+        );
+        LinearLayout.LayoutParams pp =
+            new LinearLayout.LayoutParams(-1, dp(9));
+        pp.topMargin = dp(16);
+        box.addView(progress, pp);
+
+        statusView = text("Готов к сканированию", 14, MUTED, false);
+        statusView.setPadding(0, dp(12), 0, dp(8));
+        box.addView(statusView);
+
+        TextView report = text(lastReport, 14, WHITE, false);
+        report.setPadding(0, dp(10), 0, 0);
+        box.addView(report);
+
+        addButton("НАЧАТЬ СКАНИРОВАНИЕ", () -> {
+            progress.setProgress(0);
+            statusView.setText("Проверяем систему...");
+            report.setText("");
+            runScan(progress, report, 0);
+        });
+
+        addButton("ЗАПРОСИТЬ ОЧИСТКУ КЭША",
+            this::requestCacheClear);
+
+        addNote("Сканирование проверяет системные показатели. "
+            + "Оно не может измерить весь кэш сторонних приложений.");
+    }
+
+    private void runScan(
+        ProgressBar progress, TextView report, int step
+    ) {
+        int[] values = {20, 40, 65, 85, 100};
+        String[] messages = {
+            "Проверяем хранилище...",
+            "Проверяем ОЗУ...",
+            "Анализируем заполненность...",
+            "Готовим рекомендации...",
+            "Сканирование завершено"
+        };
+
+        if (step >= values.length) {
+            lastReport = buildReport();
+            report.setText(lastReport);
+            statusView.setText("✓ Проверка завершена");
+            return;
+        }
+
+        int from = progress.getProgress();
+        android.animation.ObjectAnimator animation =
+            android.animation.ObjectAnimator.ofInt(
+                progress, "progress", from, values[step]
+            );
+        animation.setDuration(250);
+        animation.start();
+
+        statusView.setText(messages[step]);
+        handler.postDelayed(
+            () -> runScan(progress, report, step + 1), 300
+        );
+    }
+
+    private String buildReport() {
+        MemoryData data = readMemory();
+        ActivityManager.MemoryInfo ram = readRam();
+
+        StringBuilder report = new StringBuilder();
+        report.append("ХРАНИЛИЩЕ\n")
+            .append("Занято: ")
+            .append(Formatter.formatFileSize(this, data.used))
+            .append("\nСвободно: ")
+            .append(Formatter.formatFileSize(this, data.free))
+            .append("\nЗаполнено: ").append(data.percent).append("%\n\n");
+
+        report.append("ОПЕРАТИВНАЯ ПАМЯТЬ\n");
+        if (ram != null) {
+            report.append("Всего: ")
+                .append(Formatter.formatFileSize(this, ram.totalMem))
+                .append("\nДоступно: ")
+                .append(Formatter.formatFileSize(this, ram.availMem))
+                .append("\n");
+        } else {
+            report.append("Показатели недоступны.\n");
+        }
+
+        report.append("\nРЕКОМЕНДАЦИИ\n");
+
+        if (data.percent >= 90) {
+            report.append("• Хранилище почти заполнено. "
+                + "Проверь крупные файлы и приложения.\n");
+        } else if (data.percent >= 75) {
+            report.append("• Проверь свободное место "
+                + "при необходимости.\n");
+        } else {
+            report.append("• Критического заполнения "
+                + "хранилища не обнаружено.\n");
+        }
+
+        if (ram != null && ram.lowMemory) {
+            report.append("• Android сообщает о низком запасе ОЗУ. "
+                + "Закрой ненужные приложения.\n");
+        } else {
+            report.append("• Android не сообщает о критически "
+                + "низкой доступной ОЗУ.\n");
+        }
+
+        report.append("\nРазмер кэша сторонних приложений "
+            + "не определён: Android ограничивает доступ.");
+
+        return report.toString();
+    }
+
+    private void showGameMode() {
+        selectTab(gameTab);
+        content.removeAllViews();
+        addHeading("Game Mode", "Подготовка к Mobile Legends");
+
+        LinearLayout hero = card();
+        addCard(hero);
+        hero.addView(text("MOBILE LEGENDS", 22, TEAL, true));
+        hero.addView(text(
+            "\nИгровые инструменты без root-доступа.",
+            14, MUTED, false
+        ));
+
+        addButton("ЗАПУСТИТЬ MOBILE LEGENDS", () -> {
+            Intent launch = getPackageManager()
+                .getLaunchIntentForPackage(GAME_PACKAGE);
+
+            if (launch != null) {
+                startActivity(launch);
+            } else {
+                toast("Игра не найдена. Проверь, установлена ли она.");
+            }
+        });
+
+        addButton("НАСТРОЙКИ ЭКРАНА", () ->
+            openSettings(Settings.ACTION_DISPLAY_SETTINGS));
+
+        addButton("НАСТРОЙКИ ПРИЛОЖЕНИЯ ИГРЫ", () -> {
+            try {
+                startActivity(new Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + GAME_PACKAGE)
+                ));
+            } catch (Exception e) {
+                openSettings(Settings.ACTION_SETTINGS);
+            }
+        });
+
+        LinearLayout tips = card();
+        addCard(tips);
+        tips.addView(text("СОВЕТЫ ДЛЯ ИГРЫ", 13, TEAL, true));
+        tips.addView(text(
+            "\n01  Закрой ненужные приложения.\n\n"
+            + "02  Выбери подходящие настройки графики и FPS.\n\n"
+            + "03  При нагреве снизь нагрузку и дай телефону остыть.\n\n"
+            + "04  Используй стабильное интернет-соединение.\n\n"
+            + "05  Проверь игровой режим производителя телефона.",
+            14, WHITE, false
+        ));
+
+        addNote("Приложение не разгоняет процессор "
+            + "и не гарантирует увеличение FPS.");
+    }
+
+    private void requestCacheClear() {
+        if (Build.VERSION.SDK_INT < 30) {
+            toast("Этот системный механизм требует Android 11 или новее.");
+            openSettings(Settings.ACTION_SETTINGS);
+            return;
+        }
+
+        if (!Environment.isExternalStorageManager()) {
+            pendingCacheRequest = true;
+
+            try {
+                startActivity(new Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:" + getPackageName())
+                ));
+
+                toast("Проверь специальный доступ в настройках Android. "
+                    + "Он не гарантирует разрешение на очистку кэша.");
+            } catch (Exception e) {
+                pendingCacheRequest = false;
+                toast("Не удалось открыть настройки доступа.");
+                openSettings(Settings.ACTION_SETTINGS);
+            }
+
+            return;
+        }
+
+        launchCacheClearRequest();
+    }
+
+    private void launchCacheClearRequest() {
+        try {
+            Intent intent = new Intent(
+                StorageManager.ACTION_CLEAR_APP_CACHE
+            );
+            startActivityForResult(intent, REQUEST_CLEAR_CACHE);
+        } catch (Exception e) {
+            toast("Android не разрешил открыть системную очистку.");
+            openSettings(Settings.ACTION_SETTINGS);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(
+        int requestCode, int resultCode, Intent data
+    ) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == REQUEST_CLEAR_CACHE) {
+            toast("Запрос завершён. Обнови показатели памяти, "
+                + "чтобы проверить изменения.");
+        }
+    }
+
+    private void openSettings(String action) {
+        try {
+            startActivity(new Intent(action));
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Settings.ACTION_SETTINGS));
+            } catch (Exception ignored) {
+                toast("Не удалось открыть настройки.");
+            }
+        }
+    }
+
+    private void toast(String message) {
+        Toast.makeText(
+            this, message, Toast.LENGTH_LONG
+        ).show();
+    }
+
+    private MemoryData readMemory() {
+        try {
+            StatFs fs = new StatFs(
+                Environment.getDataDirectory().getPath()
+            );
+
+            long total = fs.getTotalBytes();
+            long free = fs.getAvailableBytes();
+            long used = Math.max(0, total - free);
+
+            int percent = total > 0
+                ? (int) Math.min(
+                    100, Math.round(used * 100.0 / total)
+                ) : 0;
+
+            return new MemoryData(total, free, used, percent);
+        } catch (Exception e) {
+            return new MemoryData(0, 0, 0, 0);
+        }
+    }
+
+    private ActivityManager.MemoryInfo readRam() {
+        try {
+            ActivityManager manager =
+                (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+
+            ActivityManager.MemoryInfo info =
+                new ActivityManager.MemoryInfo();
+
+            manager.getMemoryInfo(info);
+            return info;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static class MemoryData {
+        final long total;
+        final long free;
+        final long used;
+        final int percent;
+
+        MemoryData(long total, long free, long used, int percent) {
+            this.total = total;
+            this.free = free;
+            this.used = used;
+            this.percent = percent;
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
 
-        if (storageText != null) {
-            refreshInfo();
+        if (pendingCacheRequest) {
+            pendingCacheRequest = false;
+
+            if (Build.VERSION.SDK_INT >= 30
+                    && Environment.isExternalStorageManager()) {
+                launchCacheClearRequest();
+            } else {
+                toast("Специальный доступ не предоставлен. "
+                    + "Сканер остаётся доступен.");
+            }
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 }
